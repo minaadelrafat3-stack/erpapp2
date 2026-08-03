@@ -9,6 +9,12 @@ import type {
   ERPNotification,
   Category,
   DashboardSummary,
+  InventoryItem,
+  InventoryItemWithStatus,
+  InventorySummary,
+  CategoryWithCount,
+  BranchDetail,
+  WarehouseDetail,
 } from '@apptypes/erp';
 import { APP_CONFIG } from '@constants';
 
@@ -172,6 +178,33 @@ export async function fetchCategories(): Promise<Category[]> {
   return (data ?? []) as Category[];
 }
 
+export async function fetchCategoriesWithCounts(): Promise<CategoryWithCount[]> {
+  const { data: categories, error: catError } = await supabase
+    .from('categories')
+    .select('*')
+    .order('sort_order', { ascending: true });
+
+  if (catError) throw toApiError(catError);
+
+  const { data: counts, error: countError } = await supabase
+    .from('products')
+    .select('category_id')
+    .not('category_id', 'is', null);
+
+  if (countError) throw toApiError(countError);
+
+  const countMap = new Map<string, number>();
+  for (const row of counts ?? []) {
+    const cid = row.category_id as string;
+    countMap.set(cid, (countMap.get(cid) ?? 0) + 1);
+  }
+
+  return (categories ?? []).map((cat: Category) => ({
+    ...cat,
+    product_count: countMap.get(cat.id) ?? 0,
+  }));
+}
+
 // ============================================================
 // Branches & Warehouses Service
 // ============================================================
@@ -196,4 +229,223 @@ export async function fetchWarehouses(): Promise<Warehouse[]> {
 
   if (error) throw toApiError(error);
   return (data ?? []) as Warehouse[];
+}
+
+// ============================================================
+// Inventory Service
+// ============================================================
+
+const INVENTORY_SELECT = `
+  id,
+  product_id,
+  branch_id,
+  warehouse_id,
+  quantity_on_hand,
+  quantity_reserved,
+  reorder_point,
+  min_stock,
+  max_stock,
+  batch_number,
+  expiry_date,
+  last_stocked_at,
+  created_at,
+  updated_at,
+  products!inner (
+    name,
+    slug,
+    sku,
+    categories!left (
+      name
+    )
+  ),
+  branches!left (
+    name
+  ),
+  warehouses!left (
+    name
+  )
+`;
+
+export interface InventoryFilter {
+  branchId?: string;
+  warehouseId?: string;
+  categoryId?: string;
+}
+
+export async function fetchInventory(opts: InventoryFilter = {}): Promise<InventoryItemWithStatus[]> {
+  let query = supabase
+    .from('inventory')
+    .select(INVENTORY_SELECT)
+    .order('updated_at', { ascending: false })
+    .limit(200);
+
+  if (opts.branchId) query = query.eq('branch_id', opts.branchId);
+  if (opts.warehouseId) query = query.eq('warehouse_id', opts.warehouseId);
+  if (opts.categoryId) query = query.eq('products.category_id', opts.categoryId);
+
+  const { data, error } = await query;
+  if (error) throw toApiError(error);
+
+  const items: InventoryItemWithStatus[] = (data ?? []).map((row: Record<string, unknown>) => {
+    const productData = row.products as { name: string; slug: string; sku: string | null; categories: { name: string } | null } | null;
+    const branchData = row.branches as { name: string } | null;
+    const warehouseData = row.warehouses as { name: string } | null;
+
+    const base: InventoryItem = {
+      id: row.id as string,
+      product_id: row.product_id as string,
+      product_name: productData?.name ?? 'Unknown Product',
+      product_slug: productData?.slug ?? '',
+      sku: productData?.sku ?? null,
+      category_name: productData?.categories?.name ?? null,
+      branch_id: row.branch_id as string | null,
+      branch_name: branchData?.name ?? null,
+      warehouse_id: row.warehouse_id as string | null,
+      warehouse_name: warehouseData?.name ?? null,
+      quantity_on_hand: row.quantity_on_hand as number,
+      quantity_reserved: row.quantity_reserved as number,
+      reorder_point: row.reorder_point as number,
+      min_stock: row.min_stock as number,
+      max_stock: row.max_stock as number,
+      batch_number: row.batch_number as string | null,
+      expiry_date: row.expiry_date as string | null,
+      last_stocked_at: row.last_stocked_at as string | null,
+      created_at: row.created_at as string,
+      updated_at: row.updated_at as string,
+    };
+
+    const available = base.quantity_on_hand - base.quantity_reserved;
+    const isOut = base.quantity_on_hand <= 0;
+    const isLow = !isOut && available <= base.reorder_point;
+
+    return {
+      ...base,
+      available_stock: available,
+      is_low_stock: isLow,
+      is_out_of_stock: isOut,
+      stock_status: isOut ? 'out' : isLow ? 'low' : 'ok',
+    };
+  });
+
+  return items;
+}
+
+// ============================================================
+// Category Detail Service
+// ============================================================
+
+export async function fetchCategoryById(id: string): Promise<CategoryWithCount> {
+  const { data: categoryData, error: categoryError } = await supabase
+    .from('categories')
+    .select('*')
+    .eq('id', id)
+    .single();
+
+  if (categoryError) throw toApiError(categoryError);
+  if (!categoryData) throw new ApiError('Category not found.', '404', 404);
+
+  const { count, error: countError } = await supabase
+    .from('products')
+    .select('*', { count: 'exact', head: true })
+    .eq('category_id', id);
+
+  if (countError) throw toApiError(countError);
+
+  return { ...(categoryData as Category), product_count: count ?? 0 };
+}
+
+// ============================================================
+// Warehouse Detail Service
+// ============================================================
+
+export async function fetchWarehouseById(id: string): Promise<WarehouseDetail> {
+  const { data: whData, error: whError } = await supabase
+    .from('warehouses')
+    .select('*')
+    .eq('id', id)
+    .single();
+
+  if (whError) throw toApiError(whError);
+  if (!whData) throw new ApiError('Warehouse not found.', '404', 404);
+
+  const wh = whData as Warehouse;
+
+  const { data: invData, error: invError } = await supabase
+    .from('inventory')
+    .select('quantity_on_hand, quantity_reserved, reorder_point')
+    .eq('warehouse_id', id);
+
+  if (invError) throw toApiError(invError);
+
+  const rows = invData ?? [];
+  const totalUnits = rows.reduce((sum: number, r: { quantity_on_hand: number }) => sum + (r.quantity_on_hand ?? 0), 0);
+  const totalReserved = rows.reduce((sum: number, r: { quantity_reserved: number }) => sum + (r.quantity_reserved ?? 0), 0);
+  const totalAvailable = totalUnits - totalReserved;
+  const lowStockCount = rows.filter((r: { quantity_on_hand: number; quantity_reserved: number; reorder_point: number }) => {
+    const avail = (r.quantity_on_hand ?? 0) - (r.quantity_reserved ?? 0);
+    return (r.quantity_on_hand ?? 0) > 0 && avail <= (r.reorder_point ?? 0);
+  }).length;
+  const productCount = rows.length;
+  const utilizationPct = wh.capacity && wh.capacity > 0 ? Math.min(100, Math.round((totalUnits / wh.capacity) * 100)) : 0;
+
+  return {
+    ...wh,
+    product_count: productCount,
+    total_units: totalUnits,
+    total_available: totalAvailable,
+    low_stock_count: lowStockCount,
+    utilization_pct: utilizationPct,
+  };
+}
+
+// ============================================================
+// Branch Detail Service
+// ============================================================
+
+export async function fetchBranchById(id: string): Promise<BranchDetail> {
+  const { data: branchData, error: branchError } = await supabase
+    .from('branches')
+    .select('*')
+    .eq('id', id)
+    .single();
+
+  if (branchError) throw toApiError(branchError);
+  if (!branchData) throw new ApiError('Branch not found.', '404', 404);
+
+  const branch = branchData as Branch;
+
+  const { data: invData, error: invError } = await supabase
+    .from('inventory')
+    .select(`
+      quantity_on_hand,
+      warehouse_id,
+      warehouses!left (
+        name
+      )
+    `)
+    .eq('branch_id', id);
+
+  if (invError) throw toApiError(invError);
+
+  const rows = invData ?? [];
+  const totalStock = rows.reduce((sum: number, r: { quantity_on_hand: number }) => sum + (r.quantity_on_hand ?? 0), 0);
+  const productCount = rows.length;
+
+  const whRows = rows.filter((r: { warehouse_id: string | null }) => r.warehouse_id != null);
+  let warehouseId: string | null = null;
+  let warehouseName: string | null = null;
+  if (whRows.length > 0) {
+    const firstWh = whRows[0] as { warehouse_id: string; warehouses: { name: string }[] | null };
+    const whName = Array.isArray(firstWh.warehouses) ? (firstWh.warehouses[0]?.name ?? null) : null;
+    warehouseId = firstWh.warehouse_id;
+    warehouseName = whName;
+  }
+
+  return {
+    ...branch,
+    product_count: productCount,
+    total_stock: totalStock,
+    warehouse_id: warehouseId,
+    warehouse_name: warehouseName,
+  };
 }

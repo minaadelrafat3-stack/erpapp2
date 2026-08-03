@@ -5,12 +5,30 @@ import {
   fetchProducts,
   fetchProductById,
   fetchCategories,
+  fetchCategoriesWithCounts,
+  fetchCategoryById,
+  fetchInventory,
+  fetchBranches,
+  fetchBranchById,
+  fetchWarehouses,
+  fetchWarehouseById,
   type ProductListResult,
   type ProductListItem,
+  type InventoryFilter,
 } from '@services/erpService';
 import { APP_CONFIG } from '@constants';
-import type { DashboardSummary, ERPNotification, Category } from '@apptypes/erp';
-import type { ProductDetail } from '@apptypes/erp';
+import type {
+  DashboardSummary,
+  ERPNotification,
+  Category,
+  CategoryWithCount,
+  InventoryItemWithStatus,
+  Branch,
+  BranchDetail,
+  Warehouse,
+  WarehouseDetail,
+  ProductDetail,
+} from '@apptypes/erp';
 
 // ============================================================
 // Query Keys
@@ -23,6 +41,12 @@ export const erpKeys = {
   productsList: (search: string, categoryId: string | null) => ['erp', 'products', 'list', search, categoryId] as const,
   product: (id: string) => ['erp', 'products', 'detail', id] as const,
   categories: ['erp', 'categories'] as const,
+  category: (id: string) => ['erp', 'categories', 'detail', id] as const,
+  inventory: (filters: InventoryFilter) => ['erp', 'inventory', filters] as const,
+  branches: ['erp', 'branches'] as const,
+  branch: (id: string) => ['erp', 'branches', 'detail', id] as const,
+  warehouses: ['erp', 'warehouses'] as const,
+  warehouse: (id: string) => ['erp', 'warehouses', 'detail', id] as const,
 };
 
 // ============================================================
@@ -82,10 +106,69 @@ export type { ProductListItem, ProductListResult };
 // ============================================================
 
 export function useCategories() {
-  return useQuery<Category[]>({
+  return useQuery<CategoryWithCount[]>({
     queryKey: erpKeys.categories,
-    queryFn: fetchCategories,
+    queryFn: fetchCategoriesWithCounts,
     staleTime: 5 * 60_000,
+  });
+}
+
+export function useCategoryDetail(id: string | null) {
+  return useQuery<CategoryWithCount>({
+    queryKey: erpKeys.category(id ?? ''),
+    queryFn: () => fetchCategoryById(id!),
+    enabled: !!id,
+    staleTime: 60_000,
+  });
+}
+
+// ============================================================
+// Inventory Hooks
+// ============================================================
+
+export function useInventory(filters: InventoryFilter = {}) {
+  return useQuery<InventoryItemWithStatus[]>({
+    queryKey: erpKeys.inventory(filters),
+    queryFn: () => fetchInventory(filters),
+    staleTime: 30_000,
+  });
+}
+
+// ============================================================
+// Branches & Warehouses Hooks
+// ============================================================
+
+export function useBranches() {
+  return useQuery<Branch[]>({
+    queryKey: erpKeys.branches,
+    queryFn: fetchBranches,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useBranchDetail(id: string | null) {
+  return useQuery<BranchDetail>({
+    queryKey: erpKeys.branch(id ?? ''),
+    queryFn: () => fetchBranchById(id!),
+    enabled: !!id,
+    staleTime: 60_000,
+  });
+}
+
+export function useWarehouses() {
+  return useQuery<Warehouse[]>({
+    queryKey: erpKeys.warehouses,
+    queryFn: fetchWarehouses,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useWarehouseDetail(id: string | null) {
+  return useQuery<WarehouseDetail>({
+    queryKey: erpKeys.warehouse(id ?? ''),
+    queryFn: () => fetchWarehouseById(id!),
+    enabled: !!id,
+    staleTime: 60_000,
   });
 }
 

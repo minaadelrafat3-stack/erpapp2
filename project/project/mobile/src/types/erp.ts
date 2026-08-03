@@ -153,3 +153,65 @@ export interface DashboardKpi {
   icon: string;
   color: string;
 }
+
+// ============================================================
+// Inventory & Detail Types
+// ============================================================
+
+export interface InventoryItem {
+  id: string;
+  product_id: string;
+  product_name: string;
+  product_slug: string;
+  sku: string | null;
+  category_name: string | null;
+  branch_id: string | null;
+  branch_name: string | null;
+  warehouse_id: string | null;
+  warehouse_name: string | null;
+  quantity_on_hand: number;
+  quantity_reserved: number;
+  reorder_point: number;
+  min_stock: number;
+  max_stock: number;
+  batch_number: string | null;
+  expiry_date: string | null;
+  last_stocked_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InventoryItemWithStatus extends InventoryItem {
+  available_stock: number;
+  is_low_stock: boolean;
+  is_out_of_stock: boolean;
+  stock_status: 'out' | 'low' | 'ok';
+}
+
+export interface InventorySummary {
+  total_products: number;
+  total_units: number;
+  total_reserved: number;
+  total_available: number;
+  low_stock_count: number;
+  out_of_stock_count: number;
+}
+
+export interface CategoryWithCount extends Category {
+  product_count: number;
+}
+
+export interface BranchDetail extends Branch {
+  product_count: number;
+  total_stock: number;
+  warehouse_id: string | null;
+  warehouse_name: string | null;
+}
+
+export interface WarehouseDetail extends Warehouse {
+  product_count: number;
+  total_units: number;
+  total_available: number;
+  low_stock_count: number;
+  utilization_pct: number;
+}

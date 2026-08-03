@@ -90,6 +90,10 @@ export const NAV_ITEMS: NavItemConfig[] = [
   { key: 'help', label: 'Help & Support', icon: 'question', minRank: 0, group: 'administration', description: 'Support and documentation' },
 ];
 
+export function navMinRank(key: string): number {
+  return NAV_ITEMS.find((i) => i.key === key)?.minRank ?? 0;
+}
+
 // ============================================================
 // Bottom Tab Items — varies by role
 // ============================================================
