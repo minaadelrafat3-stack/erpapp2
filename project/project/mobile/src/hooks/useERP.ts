@@ -2,6 +2,9 @@ import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-quer
 import {
   fetchDashboardSummary,
   fetchRecentNotifications,
+  fetchNotifications,
+  markNotificationAsRead,
+  markAllNotificationsAsRead,
   fetchProducts,
   fetchProductById,
   fetchCategories,
@@ -12,9 +15,14 @@ import {
   fetchBranchById,
   fetchWarehouses,
   fetchWarehouseById,
+  fetchProfileWithBranch,
+  updateProfile,
+  uploadProfileAvatar,
   type ProductListResult,
   type ProductListItem,
   type InventoryFilter,
+  type ProfileUpdate,
+  type ProfileWithBranch,
 } from '@services/erpService';
 import { APP_CONFIG } from '@constants';
 import type {
@@ -29,6 +37,7 @@ import type {
   WarehouseDetail,
   ProductDetail,
 } from '@apptypes/erp';
+import type { Profile } from '@apptypes';
 
 // ============================================================
 // Query Keys
@@ -47,6 +56,8 @@ export const erpKeys = {
   branch: (id: string) => ['erp', 'branches', 'detail', id] as const,
   warehouses: ['erp', 'warehouses'] as const,
   warehouse: (id: string) => ['erp', 'warehouses', 'detail', id] as const,
+  notificationsAll: (userId: string) => ['erp', 'notifications', 'all', userId] as const,
+  profileWithBranch: (userId: string) => ['erp', 'profile', userId] as const,
 };
 
 // ============================================================
@@ -180,5 +191,65 @@ export function useRefreshERP() {
   const queryClient = useQueryClient();
   return async () => {
     await queryClient.invalidateQueries({ queryKey: ['erp'] });
+  };
+}
+
+// ============================================================
+// Notification Hooks
+// ============================================================
+
+export function useNotifications(userId: string | null) {
+  return useQuery<ERPNotification[]>({
+    queryKey: erpKeys.notificationsAll(userId ?? ''),
+    queryFn: () => fetchNotifications(userId!),
+    enabled: !!userId,
+    staleTime: 30_000,
+  });
+}
+
+export function useMarkNotificationAsRead() {
+  const queryClient = useQueryClient();
+  return async (id: string, userId: string) => {
+    await markNotificationAsRead(id);
+    await queryClient.invalidateQueries({ queryKey: erpKeys.notificationsAll(userId) });
+  };
+}
+
+export function useMarkAllNotificationsAsRead() {
+  const queryClient = useQueryClient();
+  return async (userId: string) => {
+    await markAllNotificationsAsRead(userId);
+    await queryClient.invalidateQueries({ queryKey: erpKeys.notificationsAll(userId) });
+  };
+}
+
+// ============================================================
+// Profile Hooks
+// ============================================================
+
+export function useProfileWithBranch(userId: string | null) {
+  return useQuery<ProfileWithBranch>({
+    queryKey: erpKeys.profileWithBranch(userId ?? ''),
+    queryFn: () => fetchProfileWithBranch(userId!),
+    enabled: !!userId,
+    staleTime: 60_000,
+  });
+}
+
+export function useUpdateProfile() {
+  const queryClient = useQueryClient();
+  return async (userId: string, updates: ProfileUpdate): Promise<Profile> => {
+    const updated = await updateProfile(userId, updates);
+    await queryClient.invalidateQueries({ queryKey: erpKeys.profileWithBranch(userId) });
+    return updated;
+  };
+}
+
+export function useUploadAvatar() {
+  const queryClient = useQueryClient();
+  return async (userId: string, fileUri: string, mimeType: string): Promise<string> => {
+    const publicUrl = await uploadProfileAvatar(userId, fileUri, mimeType);
+    await queryClient.invalidateQueries({ queryKey: erpKeys.profileWithBranch(userId) });
+    return publicUrl;
   };
 }

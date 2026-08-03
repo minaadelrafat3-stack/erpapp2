@@ -17,6 +17,7 @@ import type {
   WarehouseDetail,
 } from '@apptypes/erp';
 import { APP_CONFIG } from '@constants';
+import type { Profile } from '@apptypes';
 
 // ============================================================
 // Dashboard Service — reuses v_dashboard_summary view
@@ -448,4 +449,110 @@ export async function fetchBranchById(id: string): Promise<BranchDetail> {
     warehouse_id: warehouseId,
     warehouse_name: warehouseName,
   };
+}
+
+// ============================================================
+// Notification Service
+// ============================================================
+
+export async function fetchNotifications(userId: string, limit = 50): Promise<ERPNotification[]> {
+  const { data, error } = await supabase
+    .from('notifications')
+    .select('*')
+    .or(`user_id.eq.${userId},user_id.is.null`)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw toApiError(error);
+  return (data ?? []) as ERPNotification[];
+}
+
+export async function markNotificationAsRead(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('notifications')
+    .update({ is_read: true })
+    .eq('id', id);
+
+  if (error) throw toApiError(error);
+}
+
+export async function markAllNotificationsAsRead(userId: string): Promise<void> {
+  const { error } = await supabase
+    .from('notifications')
+    .update({ is_read: true })
+    .or(`user_id.eq.${userId},user_id.is.null`)
+    .eq('is_read', false);
+
+  if (error) throw toApiError(error);
+}
+
+// ============================================================
+// Profile Service
+// ============================================================
+
+export interface ProfileUpdate {
+  full_name?: string;
+  phone?: string;
+  avatar_url?: string;
+}
+
+export interface ProfileWithBranch extends Profile {
+  branch_id: string | null;
+  branch_name: string | null;
+  position: string | null;
+}
+
+export async function fetchProfileWithBranch(userId: string): Promise<ProfileWithBranch> {
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (profileError) throw toApiError(profileError);
+  if (!profile) throw new ApiError('Profile not found.', '404', 404);
+
+  const { data: employee } = await supabase
+    .from('employees')
+    .select('branch_id, position, branches!left(name)')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  const empData = employee as { branch_id: string | null; position: string | null; branches: { name: string } | null } | null;
+
+  return {
+    ...(profile as Profile),
+    branch_id: empData?.branch_id ?? null,
+    branch_name: empData?.branches?.name ?? null,
+    position: empData?.position ?? null,
+  };
+}
+
+export async function updateProfile(userId: string, updates: ProfileUpdate): Promise<Profile> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .update(updates)
+    .eq('id', userId)
+    .select('*')
+    .single();
+
+  if (error) throw toApiError(error);
+  return data as Profile;
+}
+
+export async function uploadProfileAvatar(userId: string, fileUri: string, mimeType: string): Promise<string> {
+  const ext = mimeType.split('/')[1] ?? 'jpg';
+  const path = `${userId}/avatar.${ext}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from('avatars')
+    .upload(path, { uri: fileUri, type: mimeType } as unknown as Blob, {
+      upsert: true,
+      contentType: mimeType,
+    });
+
+  if (uploadError) throw toApiError(uploadError);
+
+  const { data } = supabase.storage.from('avatars').getPublicUrl(path);
+  return data.publicUrl;
 }
